@@ -5,7 +5,6 @@ mypath = os.path.dirname(os.path.abspath(__file__))
 def abspath(path):
     return os.path.abspath(os.path.join(mypath, path))
 
-
 def FlagsForFile(filename, **kwargs):
     return {
         'flags': [
