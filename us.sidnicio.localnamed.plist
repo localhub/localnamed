@@ -6,6 +6,8 @@
 	<string>us.sidnicio.localnamed</string>
 	<key>Program</key>
 	<string>/usr/libexec/localnamed</string>
+	<key>EnableTransactions</key>
+	<false/>
 	<key>Sockets</key>
 	<dict>
 		<key>localnamed</key>

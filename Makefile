@@ -1,6 +1,6 @@
 CCFLAGS+=\
-	-Weverything\
-	-Wno-padded\
+	-Wall\
+	-Wextra\
 	-Iinclude\
 	deps/uv/.libs/libuv.a
 
@@ -30,5 +30,5 @@ unload:
 clean:
 	$(RM) localnamed
 
-%: src/%.c
-	$(CC) $(CCFLAGS) -o $@ $<
+localnamed: src/localnamed.c src/ffilter.h src/ffilter.c
+	$(CC) $(CCFLAGS) -o $@ src/ffilter.c $<

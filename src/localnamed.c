@@ -1,8 +1,11 @@
 #include <stdlib.h>
 #include <stdio.h>
+#include <stdbool.h>
 #include <sys/param.h>
 #include <launch.h>
 #include <uv/uv.h>
+
+#include "ffilter.h"
 
 #define assert_zero(cmd)                                           \
 	do {                                                           \
@@ -13,23 +16,41 @@
 		}                                                          \
 	} while (0)
 
-static char *string_copy(const char *s, size_t len) {
-	char *ret = malloc(len + 1);
-	strncpy(ret, s, len);
-	ret[len] = '\0';
-	return ret;
+#define HOSTS_FILE "/etc/hosts"
+#define LOCALNAME_IP "127.0.0.1"
+#define LOCALNAME_COMMENT "# localname"
+#define LOCALNAME_FORMAT LOCALNAME_IP " %*[^\n#] " LOCALNAME_COMMENT
+
+static bool cleanup_cb(FILE *file, void *user_info) {
+	(void)user_info;
+	int nscanned = 0;
+	fscanf(file, LOCALNAME_FORMAT " %n", &nscanned);
+	return nscanned != 0;
 }
 
-static void append_host(const char *name) {
+static bool cleanup_conn_cb(FILE *file, void *user_info) {
+	void *token;
+	if (fscanf(file, LOCALNAME_FORMAT " %zd", &token) != 0) {
+		return user_info == token;
+	} else {
+		return false;
+	}
+}
+
+static void cleanup() {
+	ffilter(HOSTS_FILE, cleanup_cb, NULL);
+}
+
+static void append_host(const char *host, void *token) {
 	FILE *hfile = fopen("/etc/hosts", "a");
-	fprintf(hfile, "127.0.0.1 %s # localname\n", name);
+	fprintf(hfile, LOCALNAME_IP " %s " LOCALNAME_COMMENT " %zd\n", host, token);
 	fclose(hfile);
 }
 
 // Not using UV's async filesystem APIs because we only want one edit to the
 // hosts file at a time
-static const char *handle_line(const char *line) {
-	void (*op)(const char *) = NULL;
+static const char *handle_line(const char *line, void *token) {
+	void (*op)(const char *, void *) = NULL;
 
 	switch (line[0]) {
 	case '+':
@@ -40,16 +61,14 @@ static const char *handle_line(const char *line) {
 	default: return "Invalid operation, expected + or -";
 	}
 
-	char *name = string_copy(line + 1, (strlen(line) - 2));
+	const char *name = line + 1;
 	if (name[0] == '\0') { return "Empty IP"; }
 
-	op(name);
-
-	free(name);
+	op(name, token);
 	return NULL;
 }
 
-// Don't let clients allocate an unlimited amount of space
+// Limit the space clients can allocate
 #define LOCALNAME_MAX_LINE 1024
 
 typedef struct {
@@ -62,21 +81,23 @@ static void localname_state_init(localname_state_t *state) {
 	state->length = 0;
 }
 
-static int localname_process_buf(localname_state_t *state, void *buf, size_t len) {
+static int localname_process_buf(localname_state_t *state, void *buf, size_t len, void *token) {
 	size_t buf_consumed = 0;
 	while (buf_consumed < len) {
 		{
-			size_t to_copy = MIN(LOCALNAME_MAX_LINE - state->length, len);
+			// Leave room for a trailing \0
+			size_t to_copy = MIN(LOCALNAME_MAX_LINE - 1 - state->length, len);
 			if (to_copy == 0) {
 				return -1;
 			}
-			memcpy(&state->line, buf, to_copy);
+			memcpy(state->line + state->length, buf, to_copy);
 			state->length += to_copy;
 			buf_consumed += to_copy;
 		}
 
 		if (state->line[state->length - 1] == '\n') {
-			const char *err = handle_line(state->line);
+			state->line[state->length - 1] = '\0';
+			const char *err = handle_line(state->line, token);
 			if (err != NULL) {
 				fprintf(stderr, "%s\n", err);
 			}
@@ -111,14 +132,20 @@ static void alloc_buffer(uv_handle_t *handle, size_t suggested_size, uv_buf_t *b
 	buf->len = suggested_size;
 }
 
+static int open_connections = 0;
+
 static void on_close(uv_handle_t *handle) {
 	free(handle->data);
 	free(handle);
+	ffilter(HOSTS_FILE, cleanup_conn_cb, handle);
+	if (--open_connections == 0) {
+		exit(0);
+	}
 }
 
 static void on_read(uv_stream_t *stream, ssize_t nread, const uv_buf_t *buf) {
 	localname_state_t *state = stream->data;
-	if (nread < 0 || localname_process_buf(state, buf->base, (size_t)nread) != 0) {
+	if (nread < 0 || localname_process_buf(state, buf->base, (size_t)nread, stream) != 0) {
 		uv_close((uv_handle_t *)stream, on_close);
 	}
 	if (buf->base) { free(buf->base); }
@@ -126,6 +153,7 @@ static void on_read(uv_stream_t *stream, ssize_t nread, const uv_buf_t *buf) {
 
 static void on_connection(uv_stream_t* listening_pipe, int status) {
 	assert_zero(status);
+	open_connections++;
 
 	uv_pipe_t *client = malloc(sizeof(uv_pipe_t));
 	uv_pipe_init(uv_default_loop(), client, 0);
@@ -140,9 +168,22 @@ static void on_connection(uv_stream_t* listening_pipe, int status) {
 	uv_read_start((uv_stream_t *)client, alloc_buffer, on_read);
 }
 
+static void __attribute__((noreturn)) on_sigterm(uv_signal_t *handle, int signum) {
+	(void)handle;
+	(void)signum;
+	cleanup();
+	exit(0);
+}
+
 int main() {
 	int fd = get_launchd_socket();
 	uv_pipe_t listening_pipe;
+
+	uv_signal_t term_signal;
+	uv_signal_init(uv_default_loop(), &term_signal);
+	uv_signal_start(&term_signal, on_sigterm, SIGTERM);
+
+	cleanup();
 
 	uv_pipe_init(uv_default_loop(), &listening_pipe, 0);
 	uv_pipe_open(&listening_pipe, fd);
