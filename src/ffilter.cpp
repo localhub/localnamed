@@ -1,10 +1,10 @@
 #include "ffilter.h"
 #include <unistd.h>
 
-typedef struct {
+struct ffilter_t {
 	FILE *r;
 	FILE *w;
-} ffilter_t;
+};
 
 static void skip_line(FILE *file) {
 	while (!feof(file)) {
@@ -18,13 +18,13 @@ static void catch_up(const ffilter_t filter, off_t pos) {
 	}
 }
 
-void ffilter(const char *path, ffilter_cb_t cb, void *user_info) {
+void ffilter(const char *path, std::function<bool(FILE *)> cb) {
 	FILE *file = fopen(path, "r+");
 	ffilter_t filter = {0, 0};
 
 	while (!feof(file)) {
 		off_t trim_start = ftello(file);
-		bool should_filter = cb(file, user_info);
+		bool should_filter = cb(file);
 
 		skip_line(file);
 

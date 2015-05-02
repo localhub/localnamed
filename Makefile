@@ -1,8 +1,15 @@
-CCFLAGS+=\
+CXXFLAGS+=\
 	-Wall\
 	-Wextra\
+	-Wno-unused-parameter\
+	-Werror\
+	--std=c++11\
+	--stdlib=libc++\
+	-D_XOPEN_SOURCE=1\
 	-Iinclude\
-	deps/uv/.libs/libuv.a
+	-framework CoreFoundation\
+	-framework CoreServices\
+	deps/uv/libuv.a
 
 INSTALL_PATH?=/
 
@@ -11,7 +18,7 @@ INSTALL_PATH?=/
 
 all: localnamed
 
-debug: CCFLAGS+= -g
+debug: CXXFLAGS+= -g
 debug: all
 
 install: all unload
@@ -30,5 +37,11 @@ unload:
 clean:
 	$(RM) localnamed
 
-localnamed: src/localnamed.c src/ffilter.h src/ffilter.c
-	$(CC) $(CCFLAGS) -o $@ src/ffilter.c $<
+localnamed: src/* deps/uv/libuv.a
+	$(CXX) $(CXXFLAGS) -o $@ src/*.cpp
+
+deps/uv/libuv.a: deps/uv/Makefile
+	$(MAKE) -C deps/uv
+
+deps/uv/Makefile:
+	git submodule init && git submodule update

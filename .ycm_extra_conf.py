@@ -8,8 +8,13 @@ def abspath(path):
 def FlagsForFile(filename, **kwargs):
     return {
         'flags': [
-            '-Weverything',
-            '-Wno-padded',
+            '-Wall',
+            '-Wextra',
+            '-Wno-unused-parameter',
+            '-Werror',
+            '--std=c++11',
+            '--stdlib=libc++',
+            '-D_XOPEN_SOURCE=1',
             '-I', abspath("include")
         ],
         'do_cache': True
