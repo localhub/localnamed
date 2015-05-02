@@ -19,8 +19,7 @@ Currently just OS X, because it uses launchd to set up its socket. systemd and (
 ## Install
 
 - Clone this repository
-- `./configure`
-- `sudo make install`
+- `make && sudo make install`
 
 ## Uninstall
 
